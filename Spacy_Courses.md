@@ -200,7 +200,7 @@ Another example with a more complex lexical match pattern is given below:
 
 ```python
 pattern = [
-    {'IS_DIGIT' : TRUE},
+    {'IS_DIGIT' : True},
     {'LOWER' : 'fifa'},
     {'LOWER' : 'world'},
     {'LOWER' : 'cup'},
@@ -1589,3 +1589,639 @@ The result of the code block above should be a printout of the current pipeline 
 ['countries_component']
 [('Czech Republic', 'GPE', 'Prague'), ('Slovakia', 'GPE', 'Bratislava')]
 ```
+
+Now that we know how to create pipeline components and extensions we can proceed to *Scaling* and *Performance*. We would learn how to make Spacy's pipeline run as fast as possible and efficiently process large volumes.
+
+If we need to process a huge volume of text a create `Doc` objects in a row, we would be better off using `nlp.pipe` method to go over the volume quickly. `nlp.pipe` will process the text as streams and will yeild the `Doc` objects. This is much faster than calling `nlp` on all each text.
+
+```python
+# Bad example: Splitting text in a huge text pool and calling nlp on it.
+docs = [nlp(text) for text in LOTS_OF_TEXT]
+
+# Good example: Using pipe and create a list of the returned Doc objects
+docs = list(nlp.pipe(LOTS_OF_TEXT))
+```
+
+`nlp.pipe` also supports passing of tuples via `as_tupless = True`. This would be usefull when we need to pass multiple metadata, like an ID linked to the text or a page number. It is sort of similar to *zip* and *unzip*. Notice in the example that we again used `nlp.pipe` to iterate over the list. Adding the `as_tuples` argument allowed us to unpack the metadata dictionary for the data entries as well. Do note that `as_tuples` would only yeild `(doc, context)` tuples.
+
+```python
+data = [
+    ('This is a text', {'id':1, 'page_number':15}),
+    ('And another text', {'id':2, 'page_number':17})
+]
+
+for doc, context in nlp.pipe(data, as_tuples = True):
+    print(doc.text, context['page_number'])
+
+# Output
+This is a text 15
+And another text 16
+```
+
+It is also possible to *add* attributes to the metadata via the `as_tuples` argument. In the example below we are going to add two new extensions `id` and `page_number`, which defaults to `None`. We can then assign values to the new attributes by getting the metadata from the original text.
+
+```python
+from spacy.tokens import Doc
+
+Doc.set_extension('id', defualt = None)
+Doc.set_extension('page_number', default = None)
+
+data = [
+    ('This is a text', {'id':1, 'page_number':15}),
+    ('And another text', {'id':2, 'page_number':17})
+]
+
+for doc, context in nlp.pipe(data, as_tuples = True):
+    doc._.id = context['id']
+    doc._.page_number = context['page_number']
+```
+
+There would also be scenarios where we would want to choose not run the entire pipeline. An example scenario of this would be if you just want to run the `tokenizer` portion on a text and not the entire `label_`, `ner` or other custom components in the pipeline. This is also possible in spacy via `nlp.make_doc`. `nlp.make_doc` would simply turn the text into a `Doc` object.
+
+```python
+# Time consuming: running the entire nlp.pipeline to a string when we want a `Doc` object
+doc = nlp('Hello World!')
+
+# Better approach: using make.doc to conver the text to `Doc` without the other attributes
+doc = nlp.make_doc('Hello World!`)
+```
+
+Passing a text to the entire pipeline when we only need the `Doc` object is going to be inefficient especially for large sizes of data. The `make_doc` method is actually how Spacy runs the entire pipeline. As you noticed, the pipeline takes in `doc` as the input and output arguments (usually) but the pipeline starts out as text. The `make_doc` is actually called in at the very beginning to convert the string into `doc` objects which can then be processed by the pipeline components. Its part of the *under the hood* of spacy.
+
+Another possible scenario we might encounter is that we have pre-loaded a model but we would not want to run portions of its pipeline. We can choose to *disable* pipeline components with the use of `nlp.disable_pipes(<pipe component name>)`. Using `disable_pipes` would *temporarily* disabled the mentioned pipe components from being run when we call `nlp`.
+
+```python
+# Disable the tagger and parser components of a pipeline
+with nlp.disable_pipes('tagger', 'parser'):
+    # Process the text with the pipe components disabled temporarily
+    doc = nlp(text)
+    print(doc.ents)
+```
+
+We mentioned that the components are only temporarily disabled. The portion where the pipe components are disabled are when it is called inside the `with` block. Once the script moves out of the `with` block the disabled pipes are again returned to active. This does not mean that the attributes for the components that were disabled would automatically get computed. We would have to run the `nlp` pipeline again if we want to access the new attributes.
+
+Now that we have some idea of how to create efficient and scalable pipelines we would be doing exercises to reinforce our learnings. In the first exercise we need to ammend the code below so that we make use of `nlp.pipe` instead of calling the token text individually.
+
+```python
+import json
+import spacy
+
+nlp = spacy.load("en_core_web_sm")
+
+with open("exercises/tweets.json") as f:
+    TEXTS = json.loads(f.read())
+
+# Process the texts and print the adjectives
+for text in TEXTS:
+    doc = nlp(text)
+    print([token.text for token in doc if token.pos_ == "ADJ"])
+```
+
+To make the code above more efficient we would want to use the `nlp.pipe` on the text file.  This way we do not have to split the text and run `nlp` on them individually.
+
+```python
+import json
+import spacy
+
+nlp = spacy.load("en_core_web_sm")
+
+with open("exercises/tweets.json") as f:
+    TEXTS = json.loads(f.read())
+
+# Process the texts and print the adjectives
+for doc in nlp.pipe(TEXTS): # Directly using nlp.pipe to the TEXTS
+    print([token.text for token in doc if token.pos_ == "ADJ"])
+```
+
+For another exercise we have to again use `nlp.pipe` method to make the processing of entities more efficient. The original code is seen below.
+
+```python
+import json
+import spacy
+
+nlp = spacy.load("en_core_web_sm")
+
+with open("exercises/tweets.json") as f:
+    TEXTS = json.loads(f.read())
+
+# Process the texts and print the entities
+docs = [nlp(text) for text in TEXTS]
+entities = [doc.ents for doc in docs]
+print(*entities)
+
+# Expected output
+(McDonalds,) (@McDonalds,) (McDonalds,) (McDonalds, Spain) (The Arch Deluxe,) (WANT, McRib) (This morning,)
+```
+
+So the solution for the code above is that instead of running `nlp(text) for text in TEXTS` we want to use `nlp.pipe`. This way we do away with the individual call of `nlp` to the text. The change for the code is seen below.
+
+```python
+# Process the texts and print the entities
+docs = list(nlp.pipe(TEXTS))
+```
+
+Now we move on to using custom attributes via the metadata. In this exercise we are going to run through the list of bookquotes. We will process  the bookquotes and add custom attributes to it via the `set_extension` method and with the use of `context` we will get the value of the `attributes` from the `context` metadata of the original JSON file.
+
+```python
+import json
+from spacy.lang.en import English
+from spacy.tokens import Doc
+
+with open("exercises/bookquotes.json") as f:
+    DATA = json.loads(f.read())
+
+nlp = English()
+
+# Register the Doc extension 'author' (default None)
+Doc.set_extension('author', default = None)
+
+# Register the Doc extension 'book' (default None)
+Doc.set_extension('book', default = None)
+
+for doc, context in nlp.pipe(DATA, as_tuples=True):
+    # Set the doc._.book and doc._.author attributes from the context
+    doc._.book = context['book']
+    doc._.author = context['author']
+
+    # Print the text and custom attribute data
+    print(doc.text, "\n", "— '{}' by {}".format(doc._.book, doc._.author), "\n")
+```
+
+The resulting text would be the book quote, formatted with the book source and the title comming from the `doc` attributes we have added.
+
+```python
+Chapter 3: Processing Pipelines
+
+This chapter will show you to everything you need to know about spaCy's processing pipeline. You'll learn what goes on under the hood when you process a text, how to write your own components and add them to the pipeline, and how to use custom attributes to add your own meta data to the documents, spans and tokens.
+
+In this exercise, you’ll be using custom attributes to add author and book meta information to quotes.
+
+A list of [text, context] examples is available as the variable DATA. The texts are quotes from famous books, and the contexts dictionaries with the keys 'author' and 'book'.
+
+    Use the set_extension method to register the custom attributes 'author' and 'book' on the Doc, which default to None.
+    Process the [text, context] pairs in DATA using nlp.pipe with as_tuples=True.
+    Overwrite the doc._.book and doc._.author with the respective info passed in as the context.
+
+import json
+
+from spacy.lang.en import English
+
+from spacy.tokens import Doc
+
+​
+
+with open("exercises/bookquotes.json") as f:
+
+    DATA = json.loads(f.read())
+
+​
+
+nlp = English()
+
+​
+
+# Register the Doc extension 'author' (default None)
+
+Doc.set_extension('author', default = None)
+
+​
+
+# Register the Doc extension 'book' (default None)
+
+Doc.set_extension('book', default = None)
+
+​
+
+for doc, context in nlp.pipe(DATA, as_tuples=True):
+
+    # Set the doc._.book and doc._.author attributes from the context
+
+    doc._.book = context['book']
+
+    doc._.author = context['author']
+
+​
+
+    # Print the text and custom attribute data
+
+    print(doc.text, "\n", "— '{}' by {}".format(doc._.book, doc._.author), "\n")
+
+One morning, when Gregor Samsa woke from troubled dreams, he found himself transformed in his bed into a horrible vermin. 
+ — 'Metamorphosis' by Franz Kafka 
+
+I know not all that may be coming, but be it what it will, I'll go to it laughing. 
+ — 'Moby-Dick or, The Whale' by Herman Melville 
+
+It was the best of times, it was the worst of times. 
+ — 'A Tale of Two Cities' by Charles Dickens 
+
+The only people for me are the mad ones, the ones who are mad to live, mad to talk, mad to be saved, desirous of everything at the same time, the ones who never yawn or say a commonplace thing, but burn, burn, burn like fabulous yellow roman candles exploding like spiders across the stars. 
+ — 'On the Road' by Jack Kerouac 
+
+It was a bright cold day in April, and the clocks were striking thirteen. 
+ — '1984' by George Orwell 
+
+Nowadays people know the price of everything and the value of nothing. 
+ — 'The Picture Of Dorian Gray' by Oscar Wilde 
+
+✔ Well done! The same technique is useful for a variety of tasks. For
+example, you could pass in page or paragraph numbers to relate the processed
+`Doc` back to the position in a larger document. Or you could pass in other
+structured data like IDs referring to a knowledge base.
+```
+
+We now have the last two exercises for Lesson 3. Here we are going to do selective processing. For this first exercise we would only want to convert a string to a `Doc` object.
+
+```python
+import spacy
+
+nlp = spacy.load("en_core_web_sm")
+text = (
+    "Chick-fil-A is an American fast food restaurant chain headquartered in "
+    "the city of College Park, Georgia, specializing in chicken sandwiches."
+)
+
+# Only tokenize the text
+doc = nlp.make_doc(text)
+print([token.text for token in doc])
+```
+
+On the next exercise we would review disabling some pipe components while processing a text. In the example below we disabled the `tagger` and `passer`.
+
+```python
+import spacy
+
+nlp = spacy.load("en_core_web_sm")
+text = (
+    "Chick-fil-A is an American fast food restaurant chain headquartered in "
+    "the city of College Park, Georgia, specializing in chicken sandwiches."
+)
+
+# Disable the tagger and parser
+with nlp.disable_pipes('tagger','parser'):
+    # Process the text
+    doc = nlp(text)
+    # Print the entities in the doc
+    print(doc.ents)
+```
+
+We are now on to the last lesson. In lesson 4 we are going to learn how to update spacy's statistical models and customize it for our use case. We will be learning how to write our training loop, understand how the training works in spacy. We will also be learning tips and tricks on how to make our custom NLP projects successful. In the lesson we would be focusing about training and updating Spacy's neural network model - specifically focusing on named entity recognizer.
+
+So why would we want to update a model? Statistical models are the basis of the predictions based on the examples it was trained on. The statistical models were trained on generic data. To make it more accurate on our application we have to update it on our data. This is the same idea as fine-tuning and transfer learning. The statistical model updating is useful on named-entity recognition although it is less critical on POS tagging and dependecy tagging. This is because POS and dependency tags are on generic syntactic attributes which benefits more on broad data samples.
+
+Below is the step in Spacy to create the new model.
+
+* Initialize the weights randomly via `nlp.begin_training`
+* Predict a few examples with the current weights by calling `nlp.update`
+* We can then compare the accuracy between the predicted results and the true labels.
+* Calculate how to change the weights based on the resulting predictions.
+* Update the weights slightly. Check the accuracy of the updated model and update the weights or stick with the current weights.
+
+![Spacy Model Update](https://course.spacy.io/training.png)
+
+*Training data* are the examples with the text and label details. The *text* would be the input text for the model which it will use for its label predictions. The *label* would be the supposed target for the machine and the correct value. The difference between the True *label* and the predicted *label* would dictate the *gradient*. The *gradient* is used to know how to update the weights of the model.
+
+In this lesson we are focused more on the `ner` component so this would be the example we will work with. The entity recognizer takes a document and predict if a phrase is an entity and provide its label. If we want to update our model then our training data has to include texts, the phrase that is considered an entity and the label for the entity. We have to note that entities cannot overlap so a token can only be part of one entity. Because entities are formed within a context, our model also needs to be trained on entities and their surrounding context and not just the entity phrase. To do this in Spacy we would need to show the model a text and a list of character offsets (basically the span index). For example, `iPhone X` is an entity with a label `gadget` and it starts with character 0 and ends with character 8 (whitespace included). To get a better grasp of context, the model also has to be trained on words that are not entities. To achieve this, we have to have a list with spans that have empty annotations (no label).
+
+```python
+# Sample entry for entity recognizers. Entities dictionary have been tagged with `start` `end` and `label`.
+# In the case below, the `entity` is `iPhone X` which starts from index 0 to 8 and to be classsified as `GADGET`.
+("iPhone X is coming", {'entities':[(0, 8, 'GADGET')]})
+
+# Important also to label text without entities.
+# The purpose of this would be for generalization of the model based on context.
+("I need a new phone! Any tips?", {'entities':[]})
+```
+
+The training data for the model will dictate how good the model would be. If we are training a category from scratch, Spacy authors recommend a few thousand to a million examples. As a reference, the Spacy English model has been trained to 2 million words. If we want to update an existing model, a few hundred to a few thousand examples should suffice. Now getting these examples are usually done manually by human annotators but it can also be done semi-automatically using Spacy's matcher or other annotators.
+
+While Spacy comes with a range of pre-trained models to predict linguistic annotations, we almost always want to fine-tune these models with examples that are related to our application. We do this by training the model in labelled data. Training the model can help improve accuracy and it can train to learn new classification schemes. What it cannot do is discover patterns in unlabelled data. Basically, Spacy components are supervised models so they can only learn to reproduce examples. We cannot expect them to guess new labels from new data. Although it would be interesting if it can annotate automatically. Maybe a GAN would work here?
+
+Moving on, since we require training data for us to update a model in Spacy we have exercises on how to create our own training data. As hinted before, we can do our own training dataset with the help of Spacy's `Matcher`. In this example we are going to look at how we can create matcher for `iPhone X` or any iphone version like `iPhone 8`.
+
+```python
+import json
+from spacy.matcher import Matcher
+from spacy.lang.en import English
+
+with open("exercises/iphone.json") as f:
+    TEXTS = json.loads(f.read())
+
+nlp = English()
+matcher = Matcher(nlp.vocab)
+
+# Two tokens whose lowercase forms match 'iphone' and 'x'
+pattern1 = [{'LOWER': 'iphone'}, {'LOWER': 'x'}]
+
+# Token whose lowercase form matches 'iphone' and an optional digit
+pattern2 = [{'LOWER': 'iphone'}, {'IS_DIGIT': True, 'OP': '?'}]
+
+# Add patterns to the matcher
+matcher.add("GADGET", None, pattern1, pattern2)
+```
+
+The next exercise we use the `Matcher` to create our training data. We would be using 2 patters for checking a match. The first `pattern` is going to look for any `iPhone X` in the doc. The second `pattern` is going to look for any `iPhone` reference with a digit next to it. We add the patterns with the tag `GADGET` to our matcher. We will then run a pipe on the text file to get the doc objects. From these doc objects we check for the entities that match. From there we can create the new `TRAINING_DATA` list.
+
+```python
+import json
+from spacy.matcher import Matcher
+from spacy.lang.en import English
+
+with open("exercises/iphone.json") as f:
+    TEXTS = json.loads(f.read())
+
+nlp = English()
+matcher = Matcher(nlp.vocab)
+pattern1 = [{"LOWER": "iphone"}, {"LOWER": "x"}]
+pattern2 = [{"LOWER": "iphone"}, {"IS_DIGIT": True, "OP": "?"}]
+matcher.add("GADGET", None, pattern1, pattern2)
+
+TRAINING_DATA = []
+
+# Create a Doc object for each text in TEXTS
+for doc in nlp.pipe(TEXTS):
+    # Match on the doc and create a list of matched spans
+    spans = [doc[start:end] for match_id, start, end in matcher(doc)]
+    # Get (start character, end character, label) tuples of matches
+    entities = [(span.start_char, span.end_char, "GADGET") for span in spans]
+    # Format the matches as a (doc.text, entities) tuple
+    training_example = (doc.text, {"entities": entities})
+    # Append the example to the training data
+    TRAINING_DATA.append(training_example)
+
+print(*TRAINING_DATA, sep="\n")
+```
+
+As we can see below, we have a list of entities that were recognized by our matcher from our input text. It does look like the pattern where the `IS_DIGIT` is set to be optional is returning some overlap in the `iPhone`. A note from the author:
+
+>✔ Well done! Before you train a model with the data, you always want to
+double-check that your matcher didn't identify any false positives. But that
+process is still much faster than doing *everything* manually.
+
+```python
+# Output
+('How to preorder the iPhone X', {'entities': [(20, 28, 'GADGET'), (20, 26, 'GADGET')]})
+('iPhone X is coming', {'entities': [(0, 8, 'GADGET'), (0, 6, 'GADGET')]})
+('Should I pay $1,000 for the iPhone X?', {'entities': [(28, 36, 'GADGET'), (28, 34, 'GADGET')]})
+('The iPhone 8 reviews are here', {'entities': [(4, 12, 'GADGET')]})
+('Your iPhone goes up to 11 today', {'entities': [(5, 11, 'GADGET')]})
+('I need a new phone! Any tips?', {'entities': []})
+```
+
+Now that we know how we can create our own data we can move on to creating our own training loop so that our statistical model gets updated. Its is normal, just like in any ML project, for the model to be trained repeatedly on the new data to achieve a better accuracy with the new category and update the model weights to the desired setup. The basic components of the training loop would be the *loop* which is the number of times we iterate over the training data for the update of the weights. The next thing we need is something that allows us to *shuffle* the training data so that the model does not memorize it and instead learn the patterns. We need to also *divide* the data into batches to conserve resources. We will then *update* our model each batch depending on how accurate the results were. Finally, we *save* the model that has been trained.
+
+The _training data_ would be the examples that the model would be trained on. For best results, it is expected to have a training data that would be similar to what the model is going to experience when in production. This would usually be a sentence, a paragraph or an entire document. The *label* would be the attribute we want our model to predict. It can be the *text category*, the *entity span* or the *type* of entity. It would depend on what we want to achieve. The *gradient* is a measure of how we should change the model to reduce the current error. It is computed by comparing the results of our predicted labels and the true value for the label. This would dictate how small or big the changes for the model's weights should be to achieve a smaller error.
+
+The sample code below shows a training loop for a model. To create a random shuffle of the `TRAINING_DATA` we use Spacy's `random.shuffle`. This should take care of the shuffling of the training data for the model. We can then create batches from our `TRAINING_DATA` via `spacy.util.minibatch`. This would split the `TRAINING_DATA` into more manageable batch sizes. Once we have our batches we have to unpack our input and target which in this case would be the `texts` component and the `annotations` component. Once the components have been unpacked, we can call on `nlp.update` for Spacy to run the training loop and update the model weights based on the `TRAINING_DATA`. Spacy would be doing this behind the scenes and it similar to the `fit` option for some SKLearn modules. Once the training loop is completed we can save the update model via `nlp.to_disk`.
+
+
+```python
+TRAINING_DATA = [
+    # This is just one example but it is expected that there would be hundreds to thousands or even millions of points in here that would be used for training.
+    ("How to preorder the iPhone X", {'entities':[(20,28, 'GADGET')]})
+]
+
+# Create a loop for the training function to run. This case 10.
+for i in range(10):
+    # Randomly shuffle the data
+    random.shuffle(TRAINING_DATA)
+    # Create batches of data to iterate
+    for batch in spacy.util.minibatch(TRAINING_DATA):
+        # Unpack the batch into its text and annotation components
+        texts = [text for text,annotations in batch]
+        annotations = [annotations for text, annotations in batch]
+        # Update the model
+        nlp.update(texts, annotation)
+
+# Save the newly updated model
+nlp.to_disk(<Path to the model>)
+```
+
+Its of note that there are no training and testing split for the model update. Also there seems to be a lack of feedback on the status update of the model like accuracy and error logs. Maybe it is not included in the lesson but is built into Spacy so I will have to check the docs.
+
+Spacy will allow us to update an already existing model with more data - like transfer learning. This would be useful if we want our data to be more accurate and specific to our use case. One very good example of this would be if we want to imporve our entity recognizer with improved detection on categories like "person" or "organization" names. Its important that we update the model with examples from the old category that it already knows as well as the new category we want it to detect.
+
+If we want to create an entirely new entity recognizer from scratch then we can also do it in Spacy. We have to take note that this would require us to have a good ammount of training data samples that have been annotated for us to acheive a good accuracy. In the example below we will be creating a new entity recognizer from scratch. We will be learning about the different functions we can use when working on the model from scratch.
+
+```python
+# Start with a blank English model
+nlp = spacy.blank('en')
+# Create a blank entity recognizer to be added to the pipeline
+ner = nlp.create_pipe('ner')
+# Add the ner to the pipeline
+nlp.add_pipe(ner)
+# Create a new label
+ner.add_label('GADGET')
+
+# Start of the training
+nlp.begin_training()
+# Create a 10-iteration training loop
+for itn in range(10):
+    # Randomly shuffle the training data
+    random.shuffle(examples)
+    # Create batches of the data
+    for batch in spacy.util.minibatch(examples, size = 2):
+        texts = [text for text, annotations in batch]
+        annotations = [annotations for text, annotations in batch]
+        # Fit the text and annotations and update the model
+        nlp.update(texts, annotations)
+```
+
+First up was we created a **blank** spacy model with `en` as the language. We then create an entity recognizer that we can add to the pipeline. Do note that a blank model will only have any pipeline components. Only the language data and tokenization rules are loaded when we call in `spacy.blank`. We have already covered creating a new pipe component and we used the same one here by `nlp.create_pipe('ner')`. We add the `ner` component to the pipeline via `nlp.add_pipe(ner)`. We also add new labels to the `ner` via `ner.add_label('GADGET')`. Since this is a blank model we would need to initialize random weights for our model. In Spacy this is done by `nlp.begin_training`. After the weight initialization its the same code block as the one we used in updating the model.
+
+Now that we know how to create a training loop we can go over some exercises. For the first example we are tasked with creating a new pipeline from scratch.
+
+```python
+import spacy
+
+# Create a blank 'en' model
+nlp = spacy.blank('en')
+
+# Create a new entity recognizer and add it to the pipeline
+ner = nlp.create_pipe('ner')
+nlp.add_pipe(ner)
+
+# Add the label 'GADGET' to the entity recognizer
+ner.add_label('GADGET')
+```
+
+In the next exercise we are going to set the training loop for our blank model. As it turns out, we can have a printout of the updates on our training losses. Its quite exciting that we have this option and I know that there must be some more metrics that are covered in the API documentation. For now the training loop is complete and is seen below. The `TRAINING_DATA` is comming from a JSON file which is hidden behind the docker container but is great that we can see it here. Its actually quite fun that we can do it this way. Gives me an idea for a blog post on tutorials if I ever need to create one.
+
+```python
+import spacy
+import random
+import json
+
+with open("exercises/gadgets.json") as f:
+    TRAINING_DATA = json.loads(f.read())
+
+nlp = spacy.blank("en")
+ner = nlp.create_pipe("ner")
+nlp.add_pipe(ner)
+ner.add_label("GADGET")
+
+# Start the training
+nlp.begin_training()
+
+# Loop for 10 iterations
+for itn in range(10):
+    # Shuffle the training data
+    random.shuffle(TRAINING_DATA)
+    losses = {}
+
+    # Batch the examples and iterate over them
+    for batch in spacy.util.minibatch(TRAINING_DATA, size=2):
+        texts = [text for text, entities in batch]
+        annotations = [entities for text, entities in batch]
+
+        # Update the model
+        nlp.update(texts, annotations, losses=losses)
+        print(losses)
+```
+
+The result of running the code above is seen in the block below. There are 30 rows of losses in the output. This is because we had minibatches within the iteration that broke down the `TRAINING_DATA` into smaller batches. The general idea for the losses would be that they are as small as possible. Obviously the `TRAINING_DATA` for this model is small but for other applications it is advised by the author to have at least hunders if not thousands of samples for training.
+
+```python
+# Output
+{'ner': 12.799999833106995}
+{'ner': 20.500216484069824}
+{'ner': 31.780635833740234}
+{'ner': 9.776407599449158}
+{'ner': 14.540975153446198}
+{'ner': 20.037540465593338}
+{'ner': 2.9750102385878563}
+{'ner': 6.091811165213585}
+{'ner': 7.655033017974347}
+{'ner': 2.1990729807293974}
+{'ner': 4.038511275197379}
+{'ner': 6.176136261507054}
+{'ner': 4.226617202337366}
+{'ner': 5.779218810999737}
+{'ner': 8.126454965135053}
+{'ner': 1.9840054925298318}
+{'ner': 3.9643915420092526}
+{'ner': 5.712961177217949}
+{'ner': 1.0643573623383418}
+{'ner': 1.6412602842901833}
+{'ner': 2.6530393167608963}
+{'ner': 0.044851671612377686}
+{'ner': 0.7857209960245655}
+{'ner': 0.7937009842356133}
+{'ner': 2.0820858136454916}
+{'ner': 2.0830706007302524}
+{'ner': 2.0849793951064894}
+{'ner': 0.00013716148635722902}
+{'ner': 1.0100149239360952}
+{'ner': 1.010094055270124}
+```
+
+Now that we are finished with discussing the training loop we can proceed with the discussion on best practices for training. The author of the lessons was kind enough to share some hints on how Spacy would react to training. We should take note that Spacy models could potentially learn a lot of things but that it would also have a tendency to unlearn them. This usually happens when we train a model and we do not tag the entities we want to retain. The model will be led to believe that it does not need to look for the entities that we have not tagged (even if they already exists) and the entity will be forgotten.
+
+Another important reminder for us is that updating existing models with new data can cause the model to overfit and compensate too much for these new examples. This is building up on the earlier point that Spacy models will tend to forget old entities if we do not retain them. Adding new data to be labeled in Spacy will tend to skew the predictions to that new label if we do not ensure that the older labels were represented in the training dataset. The term the author had for this is *"catastrophic forgetting problem"*.
+
+We have to include the new category as well as examples of the old category to be retained in the Training data. This will allow the model to update the weights to account for the new category and still keep the weights that allows it to identify the old categories we wish to retain. In Spacy we can create the additional samples we want to reatin by running the existing model on the training data and extract the entity spans we would like to retain and annotate the new data we want to add.
+
+```python
+# Example of a Training data that will lead to catastrophic forgetting
+# Only the new category `WEBSITE` is represented
+TRAINING_DATA = [
+    ('Reddit is a website', {'entities': [(0,6, 'WEBSITE')]})
+]
+
+# Example of a better training data that retains old categories
+# Old categories to be retained are also mixed in the TRAINING DATA
+TRAINING_DATA = [
+    ('Reddit is a website', {'entities': [(0,6, 'WEBSITE')]}),
+    ('Obama is a person', {'entities': [(0,5,'PERSON')]})
+]
+```
+
+Another note on Spacy is that it learns it predictions based on local context. This means that to predict named entities, the surrounding words are also considered and are important. A situation can sometimes occur when our model would simply not learn what we are trying to teach it. If the decision is based on context then the model can struggle to learn it. This means that categories that would be too specific or technical might be difficult for the model to learn without the help of a huge training set. An added problem would be the inconsistency of the label scheme or if the label scheme is too specific. An example of a very specific label scheme would be `ADULT_CLOTHING` and `CHILDRENS_CLOTHING`. A simple `CLOTHING` label would be more manageable for the model. It is good practice to plan ahead the label scheme we are going to use. It is better for the model to tag labels that are more generic and build rules on top of it instead of asking it to tag labels that would be too specific. Its always easier to train a model with a generic label and use rule-based system to improve it instead of training the entire model to be specific.
+
+```python
+# Example of a label scheme that is too specific
+LABELS = ['ADULT_SHOES', 'CHILDRENS_SHOES', 'BANDS_I_LIKE']
+
+# Good labeling scheme that is genric
+LABELS = ['CLOTHING', ' BAND']
+```
+
+
+In the example below we see that the entities were tagged specifically as `TOURIST_DESTINATION` this is a difficult entity for our model to recognize because this is quite subjective. The defenition of a `TOURIST_DESTINATION` might be too specific for our model and it will have difficulty training for it. In this case we are better off using a more generic `GPE` tagger which will find countries or locations in the data and we can then use a lookup table and a rule to determine whether the tagged 'GPE' entity is a tourist destination. This way we create a more modular approach.
+
+```python
+TRAINING_DATA = [
+    (
+        "i went to amsterdem last year and the canals were beautiful",
+        {"entities": [(10, 19, "TOURIST_DESTINATION")]},
+    ),
+    (
+        "You should visit Paris once in your life, but the Eiffel Tower is kinda boring",
+        {"entities": [(17, 22, "TOURIST_DESTINATION")]},
+    ),
+    ("There's also a Paris in Arkansas, lol", {"entities": []}),
+    (
+        "Berlin is perfect for summer holiday: lots of parks, great nightlife, cheap beer!",
+        {"entities": [(0, 6, "TOURIST_DESTINATION")]},
+    ),
+]
+```
+
+In the next example we try to ammend the code block above and re-annotate it in a way that will allow our model to train on Geo-Political Entities instead. This `GPE` tag will find *cities*, *states* or *countries*.
+
+```python
+TRAINING_DATA = [
+    (
+        "i went to amsterdem last year and the canals were beautiful",
+        {"entities": [(10, 19, "GPE")]},
+    ),
+    (
+        "You should visit Paris once in your life, but the Eiffel Tower is kinda boring",
+        {"entities": [(17, 22, "GPE")]},
+    ),
+    ("There's also a Paris in Arkansas, lol", 
+     {"entities": [(15, 20, "GPE"),(24, 32, "GPE")]}),
+    (
+        "Berlin is perfect for summer holiday: lots of parks, great nightlife, cheap beer!",
+        {"entities": [(0, 6, "GPE")]},
+    ),
+]
+```
+
+In the next exercise we want to create a labelled dataset for an entity `WEBSITE`. In the exercise we would be doing the annotation by hand but for larger scale implementation we would usually be doing this in a more automated fashion like an annotation tool. Some recommended examples from the author was [Prodigy](https://prodi.gy/) and [Brat](http://brat.nlplab.org/). One thing to note when doing annotation by hand is that we use index-0.
+
+```python
+TRAINING_DATA = [
+    (
+        "Reddit partners with Patreon to help creators build communities",
+        {"entities": [(0, 6, "WEBSITE"), (21, 28, "WEBSITE")]},
+    ),
+    ("PewDiePie smashes YouTube record", {"entities": [(18, 25, "WEBSITE")]}),
+    (
+        "Reddit founder Alexis Ohanian gave away two Metallica tickets to fans",
+        {"entities": [(0, 6, "WEBSITE")]},
+    ),
+    # And so on...
+]
+```
+
+Once we run the code above we will notice that the model will start failing to recognize `PERSON` entities. This would be due to the fact that we are not annotating the know `PERSON` entities in our `TRAINING_DATA`. If we do not include an entity in the `TRAINING_DATA` the model will think that the entity is not valid (since it was not tagged) and will stop processing it. This eventually leads the model to "foreget" about an entity. On the next exercise we are going to be tagging multiple entities on our document. Aside from the `WEBSITE` label we would also be adding `PERSON` labels. This way we can ensure that aside from discovering the new annotations for `WEBSITE` our model also retains the entity `PERSON` in its prediction.
+
+```python
+TRAINING_DATA = [
+    (
+        "Reddit partners with Patreon to help creators build communities",
+        {"entities": [(0, 6, "WEBSITE"), (21, 28, "WEBSITE")]},
+    ),
+    ("PewDiePie smashes YouTube record", {"entities": [____, (18, 25, "WEBSITE")]}),
+    (
+        "Reddit founder Alexis Ohanian gave away two Metallica tickets to fans",
+        {"entities": [(0, 6, "WEBSITE"), ____]},
+    ),
+    # And so on...
+]
+```
+
+## END OF THE COURSE
+
+Now that I have finished the course, I guess its time to take up a project in it. I am planning on a Sentiment analyzer based on the PyTorch Deep Learning Nanodegree. It would be fun to do it and see if I can train an analyzer and deploy it to heroku.
